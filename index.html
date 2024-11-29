@@ -1,13 +1,148 @@
-ciao
-questa e' la mia pagina, bla bla bla
+<div>
+    <table id="tab"></table>
+    <canvas id="myChart"></canvas>
+  </div>
+  
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/moment@2.27.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-moment@0.1.1"></script>
 
-<iframe
-  src="https://lu.ma/embed-events/usr-BVJFLTjnKh4CJhm"
-  width="600"
-  height="450"
-  frameborder="0"
-  style="border:1px solid #bfcbda88; border-radius:4px;"
-  allowfullscreen=""
-  aria-hidden="false"
-  tabindex="0"
-></iframe>
+  <script>
+    
+
+
+    let data=[]
+    const urlstr = ("https://eu1.cloud.thethings.network/api/v3/as/applications/burlizzi/packages/storage/uplink_message");
+
+const resp =  fetch(urlstr,{
+    headers: {
+        "Authorization": "Bearer NNSXS.ZIZM2R36FKNOTJAKKTZJSMPO2WKDIU6W3SZXHRQ.I5NB6QK2AFROSEML3C3OXMUOE36M74DAY7DVIB6QTS4JIEX4GJNQ",
+    },
+
+
+}).then(response=>response.text()).then(
+    function (text) {
+        let labels = [];
+        let datasets=[]
+        let bla=15
+        let readings=text.trimEnd("\n").split("\n")
+        readings.forEach(
+            function (item) {
+                let i=JSON.parse(item)
+
+
+                labels.push(new Date(i.result.received_at))
+
+
+
+                for (var room in i.result.uplink_message.decoded_payload.temperature)
+                {
+                    let found = datasets.find((element) => element.label==room);
+                    if (!found)
+                    {
+                        found={
+                            type: 'line',
+                            label: room,
+                            data: [],
+                            fill: false,
+                            cubicInterpolationMode: 'monotone',
+                            tension: 0.4,
+                            pointRadius: 1
+                        }
+                        datasets.push(found)
+                    }
+                }
+                bla=15
+                for (var s in i.result.uplink_message.decoded_payload.status)
+                {
+                    bla=bla-0.1
+                    let found = datasets.find((element) => element.label==s);
+                    if (!found)
+                    {
+                        found={
+                            type: 'line',
+                            label: s,
+                            data: [],
+                            showLine:false,
+                            pointRadius: 5
+                            //borderColor: 'rgb(255, 99, 132)',
+                            //backgroundColor: 'rgba(255, 99, 132, 0.2)'
+
+                        }
+                        datasets.push(found)
+                    }
+                    value=i.result.uplink_message.decoded_payload.status[s]
+                    found.data.push(value=="ALARM"?bla:NaN)
+                    
+                }                
+
+
+            })
+
+        readings.forEach( item=>
+            datasets.forEach(function(dataset){
+                let i = JSON.parse(item)
+                let temp=i.result.uplink_message.decoded_payload.temperature
+                let read= temp?temp[dataset.label]:NaN
+                dataset.data.push(read)
+            }
+            )
+        )
+        console.log(datasets)
+        data = {
+        labels: labels,
+        datasets:datasets
+        };
+
+
+        const ctx = document.getElementById('myChart');
+  
+        new Chart(ctx, {
+            
+        data: data,
+        options: {
+            type: 'scatter',
+
+            responsive: true,
+            plugins: {
+            title: {
+                display: true,
+                text: 'Chart.js Line Chart - Cubic interpolation mode'
+            },
+            },
+            interaction: {
+            intersect: false,
+            },
+            scales: {
+            x: {
+                type: 'time',
+                display: true,
+                title: {
+                display: true
+                }
+            },
+            y: {
+                display: true,
+                title: {
+                display: true,
+                text: '°C'
+                },
+                min: bla,
+                max: 21
+            }
+            }
+        },
+
+
+  });
+
+
+
+    }
+
+)
+
+
+
+    
+  </script>
