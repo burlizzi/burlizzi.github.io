@@ -19,22 +19,19 @@ const resp =  fetch(urlstr,{
         "Authorization": "Bearer NNSXS.ZIZM2R36FKNOTJAKKTZJSMPO2WKDIU6W3SZXHRQ.I5NB6QK2AFROSEML3C3OXMUOE36M74DAY7DVIB6QTS4JIEX4GJNQ",
     },
 
-
 }).then(response=>response.text()).then(
     function (text) {
         let labels = [];
         let datasets=[]
-        let bla=15
+        let bla=15.0
         let readings=text.trimEnd("\n").split("\n")
+        let count=0
         readings.forEach(
             function (item) {
+                count=count+1
                 let i=JSON.parse(item)
-
-
-                labels.push(new Date(i.result.received_at))
-
-
-
+                if (i.result.uplink_message.decoded_payload.temperature)
+                    labels.push(new Date(i.result.received_at))
                 for (var room in i.result.uplink_message.decoded_payload.temperature)
                 {
                     let found = datasets.find((element) => element.label==room);
@@ -52,7 +49,29 @@ const resp =  fetch(urlstr,{
                         datasets.push(found)
                     }
                 }
-                bla=15
+            })
+        readings.forEach( item=>
+            datasets.forEach(function(dataset){
+                
+                let i = JSON.parse(item)
+                let temp=i.result.uplink_message.decoded_payload.temperature
+                if(temp)
+                {
+                    let read= temp?temp[dataset.label]:NaN
+                    dataset.data.push(read)
+    
+                }
+            }
+            )
+        )
+        console.log(count)
+
+         count=0
+        readings.forEach(
+            function (item) {
+                count=count+1
+                let i=JSON.parse(item)
+                bla=15.0
                 for (var s in i.result.uplink_message.decoded_payload.status)
                 {
                     bla=bla-0.1
@@ -71,23 +90,19 @@ const resp =  fetch(urlstr,{
                         }
                         datasets.push(found)
                     }
-                    value=i.result.uplink_message.decoded_payload.status[s]
-                    found.data.push(value=="ALARM"?bla:NaN)
+                    let value=i.result.uplink_message.decoded_payload.status[s]
+                    let ok=value=="ALARM"?bla:NaN
+                    found.data.push(ok)
                     
                 }                
 
 
             })
+            console.log(count)
 
-        readings.forEach( item=>
-            datasets.forEach(function(dataset){
-                let i = JSON.parse(item)
-                let temp=i.result.uplink_message.decoded_payload.temperature
-                let read= temp?temp[dataset.label]:NaN
-                dataset.data.push(read)
-            }
-            )
-        )
+
+
+
         console.log(datasets)
         data = {
         labels: labels,
