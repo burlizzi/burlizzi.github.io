@@ -1,6 +1,8 @@
+
 <div>
     <table id="tab"></table>
     <canvas id="myChart"></canvas>
+    <canvas id="myChart2"></canvas>
   </div>
   
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -8,21 +10,48 @@
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-moment@0.1.1"></script>
 
   <script>
-    
-
-
     let data=[]
     const urlstr = ("https://eu1.cloud.thethings.network/api/v3/as/applications/burlizzi/devices/eui-luca/packages/storage/uplink_message");
 
-const resp =  fetch(urlstr,{
-    headers: {
-        "Authorization": "Bearer NNSXS.ZIZM2R36FKNOTJAKKTZJSMPO2WKDIU6W3SZXHRQ.I5NB6QK2AFROSEML3C3OXMUOE36M74DAY7DVIB6QTS4JIEX4GJNQ",
+    const resp =  fetch(urlstr,{
+        headers: {
+            "Authorization": "Bearer NNSXS.ZIZM2R36FKNOTJAKKTZJSMPO2WKDIU6W3SZXHRQ.I5NB6QK2AFROSEML3C3OXMUOE36M74DAY7DVIB6QTS4JIEX4GJNQ",
     },
 
 }).then(response=>response.text()).then(
     function (text) {
         let labels = [];
         let datasets=[]
+        let datasets2=[
+        {
+                            type: 'line',
+                            label: 'rssi',
+                            data: [],
+                            fill: false,
+                            cubicInterpolationMode: 'monotone',
+                            tension: 0.4,
+                            pointRadius: 1
+                        },
+                        {
+                            type: 'line',
+                            label: 'signal_rssi',
+                            data: [],
+                            fill: false,
+                            cubicInterpolationMode: 'monotone',
+                            tension: 0.4,
+                            pointRadius: 1
+                        },
+                        {
+                            type: 'line',
+                            label: 'snr',
+                            data: [],
+                            fill: false,
+                            cubicInterpolationMode: 'monotone',
+                            tension: 0.4,
+                            pointRadius: 1,
+                            yAxisID: 'y1',
+                        },
+                    ]
         let bla=15.0
         let readings=text.trimEnd("\n").split("\n")
         let count=0
@@ -64,14 +93,65 @@ const resp =  fetch(urlstr,{
             }
             )
         )
-        console.log(count)
 
          count=0
         readings.forEach(
             function (item) {
                 count=count+1
                 let i=JSON.parse(item)
+                class avg {
+                    constructor() {
+                        this.sum=0
+                        this.count=0
+                    }
+                    add(x){
+                        if (isNaN(x))
+                            return
+                        this.sum+=x;
+                        this.count++
+                    }
+                    avg(){
+                        return this.sum/this.count
+                    }
+
+                }
+                rssi=new avg()
+                
+                signal_rssi=new avg()
+                snr=new avg()
+
+                i.result.uplink_message.rx_metadata.forEach(bridge => {
+
+
+                    rssi.add(bridge.rssi)
+                    signal_rssi.add(bridge.signal_rssi)
+                    snr.add(bridge.snr)
+                    let found = datasets2.find((element) => element.label==bridge.gateway_ids.eui);
+                    if (!found)
+                    {
+                        found={
+                            type: 'line',
+                            label: bridge.gateway_ids.eui,
+                            data: new Array(datasets2[0].data.length).fill(NaN),
+                            showLine:false,
+                            yAxisID: 'y1',
+                            pointRadius: 5
+                        }
+                        datasets2.push(found)
+                    }
+                    found.data.push(bridge.snr)
+
+                });
                 bla=15.0
+
+                datasets2[0].data.push(rssi.avg())
+                datasets2[1].data.push(signal_rssi.avg())
+                datasets2[2].data.push(snr.avg())
+                datasets2.forEach(x=>{
+                    if (datasets2[0].data.length>x.data.length)
+                        x.data.push(NaN)
+                })
+                //datasets2[3].data.push(i.result.uplink_message.rx_metadata.length)
                 for (var s in i.result.uplink_message.decoded_payload.status)
                 {
                     bla=bla-0.1
@@ -84,9 +164,6 @@ const resp =  fetch(urlstr,{
                             data: [],
                             showLine:false,
                             pointRadius: 5
-                            //borderColor: 'rgb(255, 99, 132)',
-                            //backgroundColor: 'rgba(255, 99, 132, 0.2)'
-
                         }
                         datasets.push(found)
                     }
@@ -95,15 +172,7 @@ const resp =  fetch(urlstr,{
                     found.data.push(ok)
                     
                 }                
-
-
             })
-            console.log(count)
-
-
-
-
-        console.log(datasets)
         data = {
         labels: labels,
         datasets:datasets
@@ -114,44 +183,83 @@ const resp =  fetch(urlstr,{
   
         new Chart(ctx, {
             
-        data: data,
-        options: {
-            type: 'scatter',
+            data: data,
+            options: {
+                type: 'scatter',
 
-            responsive: true,
-            plugins: {
-            title: {
-                display: true,
-                text: 'home status'
-            },
-            },
-            interaction: {
-            intersect: false,
-            },
-            scales: {
-            x: {
-                type: 'time',
-                display: true,
+                responsive: true,
+                plugins: {
                 title: {
-                display: true
-                }
-            },
-            y: {
-                display: true,
-                title: {
-                display: true,
-                text: '°C'
+                    display: true,
+                    text: 'home status'
                 },
-                min: bla,
-                max: 21
+                },
+                interaction: {
+                intersect: false,
+                },
+                scales: {
+                x: {
+                    type: 'time',
+                    display: true,
+                    title: {
+                    display: true
+                    }
+                },
+                y: {
+                    display: true,
+                    title: {
+                    display: true,
+                    text: '°C'
+                    },
+                }
+                }
             }
+        });
+
+        const ctx1 = document.getElementById('myChart2');
+        new Chart(ctx1, {
+            
+            data: {
+                labels: labels,
+                datasets:datasets2
+                },
+            options: {
+                type: 'scatter',
+
+                responsive: true,
+                plugins: {
+                title: {
+                    display: true,
+                    text: 'home status'
+                },
+                },
+                interaction: {
+                intersect: false,
+                },
+                scales: {
+                x: {
+                    type: 'time',
+                    display: true,
+                    title: {
+                    display: true
+                    }
+                },
+                y: {
+                    display: true,
+                    title: {
+                    display: true,
+                    text: 'db'
+                    },
+                },
+                y1: {
+                    display: true,
+                    title: {
+                    display: true,
+                    },
+                }
+                }
             }
-        },
-
-
-  });
-
-
+        });
 
     }
 
