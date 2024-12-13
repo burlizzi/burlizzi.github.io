@@ -103,10 +103,14 @@
                     constructor() {
                         this.sum=0
                         this.count=0
+                        this.max = -99999
                     }
                     add(x){
+                    
                         if (isNaN(x))
                             return
+                        if (x>this.max)
+                            this.max=x
                         this.sum+=x;
                         this.count++
                     }
@@ -144,9 +148,9 @@
                 });
                 bla=15.0
 
-                datasets2[0].data.push(rssi.avg())
-                datasets2[1].data.push(signal_rssi.avg())
-                datasets2[2].data.push(snr.avg())
+                datasets2[0].data.push(rssi.max)
+                datasets2[1].data.push(signal_rssi.max)
+                datasets2[2].data.push(snr.max)
                 datasets2.forEach(x=>{
                     if (datasets2[0].data.length>x.data.length)
                         x.data.push(NaN)
