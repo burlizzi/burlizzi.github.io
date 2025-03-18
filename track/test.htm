@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Google OAuth Example</title>
+    <script src="https://apis.google.com/js/platform.js?onload=init" async defer></script>
+</head>
+
+<body>
+    <h1>Google OAuth Example</h1>
+    <button id="loginButton">Login with Google</button>
+    <pre id="response"></pre>
+    <script>
+        function init() {
+            gapi.load('auth2', function () {
+                let GoogleAuth = gapi.auth2.init({
+                                client_id: "675477391014-8eoqrt38t8ljr1l7ku7je1v674gh2r3s.apps.googleusercontent.com",
+                                scope: 'openid email profile'
+                            });
+
+                    GoogleAuth.then(() => {
+                        if (GoogleAuth.isSignedIn.get()) {
+                            let user = GoogleAuth.currentUser.get();
+                            this.ngZone.run(() => {
+                                observer.next(user.getAuthResponse());
+                            });
+                        }
+                    });
+
+        });
+    }
+       
+    </script>
+</body>
+
+</html>
