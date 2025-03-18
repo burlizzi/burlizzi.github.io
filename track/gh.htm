@@ -1,0 +1,56 @@
+<script src="https://cdn.jsdelivr.net/npm/protobufjs@7.4.0/dist/protobuf.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@badgateway/oauth2-client@2.4.2/browser/oauth2-client.min.js"></script>
+
+
+
+<script>
+protobuf.configure();
+    
+protobuf.load(['https://burlizzi.github.io/track/DeviceUpdate.proto','https://burlizzi.github.io/track/checkin.proto'], function(err, root) {
+    if (err)
+        throw err;
+
+
+    var buffer = root.DevicesListRequest.encode( 
+        {
+            deviceListRequestPayload:{ 
+                type: root.DeviceType.SPOT_DEVICE,
+                id:crypto.randomUUID()
+            }
+        }).finish();
+    
+    console.log(`buffer = ${(buffer)}`);
+    var api_scope="nbe_list_devices"
+    var url = "https://android.googleapis.com/nova/" + api_scope
+    
+    var obj={
+        user_serial_number:0,
+        checkin : {
+            type: root.nested.checkin_proto.DeviceType.DEVICE_CHROME_BROWSER,
+            chromeBuild:{
+                platform: root.nested.checkin_proto.nested.ChromeBuildProto.Platform.PLATFORM_LINUX,
+                chrome_version: "94.0.4606.51",
+                channel: root.nested.checkin_proto.ChromeBuildProto.Channel.CHANNEL_STABLE
+            }
+        },
+        version: 3
+    }
+    console.log(`obj = ${JSON.stringify(obj)}`);
+    var err =root.nested.checkin_proto.nested.AndroidCheckinRequest.verify(obj)
+    if (err)
+        throw Error(err);
+    var payload = root.nested.checkin_proto.nested.AndroidCheckinRequest.encode(obj).finish()
+    console.log(`payload = ${(payload)}`);
+
+
+    var config = client.discovery(server, clientId, clientSecret)
+
+    client.authorizationCodeGrant(config, currentUrl, {
+                pkceCodeVerifier: code_verifier,
+                expectedState: state,
+            })
+    
+
+});
+
+</script>
