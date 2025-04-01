@@ -1,3 +1,4 @@
+
 <html>
   <body>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -5,6 +6,28 @@
          data-client_id="826390382759-p7360ae3mevasifj0vu924tp7l5l0129.apps.googleusercontent.com"
          data-callback="handleCredentialResponse">
     </div>
+    <script>
+        function handleCredentialResponse(response) {
+           const responsePayload = decodeJwtResponse(response.credential);
+      
+           console.log("ID: " + responsePayload.sub);
+           console.log('Full Name: ' + responsePayload.name);
+           console.log('Given Name: ' + responsePayload.given_name);
+           console.log('Family Name: ' + responsePayload.family_name);
+           console.log("Image URL: " + responsePayload.picture);
+           console.log("Email: " + responsePayload.email);
+        }
+      
+        function decodeJwtResponse(token) {
+          let base64Url = token.split('.')[1];
+          let base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+          let jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+              return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+          }).join(''));
+      
+          return JSON.parse(jsonPayload);
+        }
+      </script>
     <div class="g_id_signin" data-type="standard"></div>
   </body>
 </html>
