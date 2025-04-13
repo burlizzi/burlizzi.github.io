@@ -591,7 +591,7 @@
 				INVALID_DEVICENAME_LENGTH: { en: 'Devicename length must be 1 to 19 bytes (UTF-8 characters consume 2 bytes)', ru: 'Имя устройства должно быть от 1 до 19 символов, включая кодирование UTF-8' },
 				INVALID_BINDKEY_LENGTH: { en: 'Bindkey must be 16 bytes, hex encoded (=32 characters)', ru: 'BindKey должен соднержать 16 байт в HEX виде (32 символа)' },
 				INVALID_FINDMYKEY_LENGTH: { en: 'FindMyKey must be 28 bytes, Format Base64', ru: 'BindKey должен содержать 28 байта, формат Base64' },
-				INVALID_GOOGLEKEY_LENGTH: { en: 'Google Key must be 28 bytes, Format Base64', ru: 'BindKey должен содержать 28 байта, формат Base64' },
+				INVALID_GOOGLEKEY_LENGTH: { en: 'Google Key must be 20 bytes, Format Base64', ru: 'BindKey должен содержать 28 байта, формат Base64' },
 				INVALID_ROLLINGKEY_LENGTH: { en: 'Rolling Google Key must be 36 bytes, Format Base64', ru: 'BindKey должен содержать 28 байта, формат Base64' },
 				UPLOAD_FIRMWARE: { en: 'Download firmware file', ru: 'Загрузка firmware файла' },
 				WARNING_BOOT_FW: { en: 'Attention!: Uploading boot FW is not safe. In order to avoid firmware failure use a fresh battery!', ru: 'Внимание!: Обновление  Boot fw не безопасно. Во избежание сбоя прошивки желательно использование полной батареи!' },
@@ -1563,7 +1563,7 @@
 					$('lblTime').innerHTML = sDateTime;
 					const now = new Date();
 					const utcTime = now.toUTCString(); // Converts to a UTC string
-					console.log(utcTime); // Example: "Mon, 30 Oct 2023 12:34:56 GMT"
+					//console.log(utcTime); // Example: "Mon, 30 Oct 2023 12:34:56 GMT"
 	
 					const time = Date.UTC(
 						now.getUTCFullYear(),
@@ -1575,7 +1575,7 @@
 						now.getUTCMilliseconds()
 					)/1000;				
 					delta = devTime.cur - time;
-					console.log(`${i18n.getTag('TIME_ON_DEVICE')}: ${sDateTime}, ${i18n.getTag('DIFFERENCE')}: ${Math.round(delta)} ${i18n.getTag('SECONDS')}`);
+					//console.log(`${i18n.getTag('TIME_ON_DEVICE')}: ${sDateTime}, ${i18n.getTag('DIFFERENCE')}: ${Math.round(delta)} ${i18n.getTag('SECONDS')}`);
 					$('lbDeltaTime').innerHTML = `${i18n.getTag('DIFFERENCE')}: ${Math.round(delta)} ${i18n.getTag('SECONDS')}`;
 					if(len > 18) {
 					  rds_count = value.getUint32(15,true);
@@ -1585,7 +1585,7 @@
 				}
 			}
 			$('lblTrg').innerHTML = so;
-			console.log(s);
+			//console.log(s);
 			addChartData(temp, humi);
 			if(isChartEnabled)
 				chart.updateOptions(
@@ -1724,17 +1724,17 @@
 				let cid = value.getUint8(1);
 				if(cid == 1) {
 					devKeys.cfindmykey_tmp = value.buffer.slice(2,2+10);
-					cmdCharacteristic.writeValue(new Uint8Array([0x1c, 2])).catch(error => { addLog("setFindMyKey() Error: " + error); });
+					cmdCharacteristic.writeValue(new Uint8Array([0x1b, 2])).catch(error => { addLog("setFindMyKey() Error: " + error); });
 				} else if(cid == 3 && len == (2+10)) {
 					devKeys.cfindmykey_tmp = value.buffer.slice(2,2+10);
 					let blk = new Uint8Array(10+2);
 					blk.set(devKeys.cfindmykey.slice(10),2);
-					blk[0] = 0x1c;
+					blk[0] = 0x1b;
 					blk[1] = 4;
 					cmdCharacteristic.writeValue(blk).catch(error => { addLog("setFindMyKey() Error: " + error); });
 				} else if(cid == 2 || (cid == 4 && len == (2+10))) {
-					//addLog("### "+ bytesToHex(devKeys.cfindmykey_tmp, 14) + bytesToHex(value.buffer.slice(2,16), 14));
-					devKeys.cfindmykey = new Uint8Array(36);
+					addLog("### "+ bytesToHex(devKeys.cfindmykey_tmp, 14) + bytesToHex(value.buffer.slice(2,16), 14));
+					devKeys.cfindmykey = new Uint8Array(20);
 					devKeys.cfindmykey.set(new Uint8Array(devKeys.cfindmykey_tmp));
 					devKeys.cfindmykey.set(new Uint8Array(value.buffer.slice(2,2+10)), 10);
 					addLog("FindMy key # "+ bytesToHex(devKeys.cfindmykey, 20));
@@ -2221,11 +2221,11 @@
 function setFindMyKey() {
 	if(cmdCharacteristic != null) {
 		let sk = $("inpFindMyKey").value;
-		if(sk.length > 35) {
+		if(sk.length > 28) {
 			let bk = Uint8Array.from(atob(sk), c => c.charCodeAt(0));
 			if(bk.length == 28) {
 				devKeys.cfindmykey = bk;
-				let blk = new Uint8Array(18);
+				let blk = new Uint8Array(16);
 				blk.set(bk.slice(0,14),2);
 				blk[0] = 0x19;
 				blk[1] = 3;
@@ -2245,8 +2245,8 @@ function setFindMyKey() {
 	
 	function setGoogleKey() {
 		if(cmdCharacteristic != null) {
-			let sk = $("inpFindMyKey").value;
-			if(sk.length > 27) {
+			let sk = $("inpGoogleKey").value;
+			if(sk.length > 20) {
 				let bk = Uint8Array.from(atob(sk), c => c.charCodeAt(0));
 				if(bk.length == 20) {
 					devKeys.cfindmykey = bk;
@@ -2258,9 +2258,9 @@ function setFindMyKey() {
 					cmdCharacteristic.writeValue(blk).catch(error => { addLog("setFindMyKey() Error: " + error); });
 					return;
 				}
-				addLog(`${i18n.getTag('INVALID_FINDMYKEY_LENGTH')+' bk:'+bk.length}!`)
+				addLog(`${i18n.getTag('INVALID_FINDMYKEY_LENGTH')+' google bk:'+bk.length}!`)
 			}
-			addLog(`${i18n.getTag('INVALID_FINDMYKEY_LENGTH')+' sk:'+sk.length}!`)
+			addLog(`${i18n.getTag('INVALID_FINDMYKEY_LENGTH')+' go sk:'+sk.length}!`)
 		}
 	}
 	
@@ -2272,7 +2272,7 @@ function setFindMyKey() {
 
 function setRollingKey() {
 	if(cmdCharacteristic != null) {
-		let sk = $("inpFindMyKey").value;
+		let sk = $("inpRollingKey").value;
 		if(sk.length > 35) {
 			let bk = Uint8Array.from(atob(sk), c => c.charCodeAt(0));
 			if(bk.length == 28) {
