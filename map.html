@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Timeline su Mappa</title>
+    
+    <!-- Include Leaflet CSS e JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    
+    <style>
+        #map {
+            height: 600px;
+            width: 100%;
+        }
+        .controls {
+            padding: 20px;
+            background: #f0f0f0;
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <button onclick="animateTrack()">Riproduci traccia</button>
+    </div>
+    <div id="map"></div>
+
+    <script>
+        // Inizializza la mappa
+        const map = L.map('map').setView([45.4642, 9.1900], 13); // Coordinate iniziali di Milano
+        
+        // Aggiungi tile layer OpenStreetMap
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        let polyline;
+        let markers = [];
+        let currentPosition = 0;
+
+        // Funzione per caricare i dati dall'API
+        async function loadTrackData() {
+            try {
+                const response = await fetch('https://xtogeso2mwuprwi46kp7mf4t6m0drfoj.lambda-url.eu-west-1.on.aws/?id=6801d638-0000-2353-a061-14c14ef7b930&name=Portafoglio');
+                const data = await response.json();
+                
+                // Crea array di coordinate
+                const coordinates = data.map(point => [point.latitude, point.longitude]);
+                
+                // Aggiungi polyline alla mappa
+                polyline = L.polyline(coordinates, {color: 'red'}).addTo(map);
+                
+                // Crea marker per ogni punto
+                data.forEach((point, index) => {
+                    const marker = L.marker([point.latitude, point.longitude])
+                        .bindPopup(`<b>${new Date(point.time).toLocaleString()}</b>`);
+                    markers.push(marker);
+                });
+
+                // Adatta la vista alla traccia
+                map.fitBounds(polyline.getBounds());
+
+            } catch (error) {
+                console.error('Errore nel caricamento dati:', error);
+                alert('Errore nel caricamento della traccia');
+            }
+        }
+
+        // Funzione animazione traccia
+        function animateTrack() {
+            if(currentPosition >= markers.length) currentPosition = 0;
+            
+            // Rimuovi tutti i marker precedenti
+            markers.forEach(marker => map.removeLayer(marker));
+            
+            // Aggiungi marker corrente
+            markers[currentPosition].addTo(map);
+            map.panTo(markers[currentPosition].getLatLng());
+            
+            currentPosition++;
+            setTimeout(animateTrack, 1000); // Aggiorna ogni secondo
+        }
+
+        // Carica i dati al caricamento della pagina
+        window.onload = loadTrackData;
+    </script>
+</body>
+</html>
