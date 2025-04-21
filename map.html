@@ -35,13 +35,14 @@
                 if(!Array.isArray(data)) throw new Error("Formato dati non valido");
                 
                 // Crea polilinea
-                const coordinates = data.map(p => [p.latitude, p.longitude]);
+                const coordinates = data.map(p => [p.lat, p.lon]);
                 L.polyline(coordinates, {color: 'blue'}).addTo(map);
 
                 // Aggiungi marcatori con etichette temporali
                 data.forEach(point => {
                     const timestamp = new Date(point.time);
                     const timeString = timestamp.toLocaleTimeString([], { 
+                        day: '2-digit', 
                         hour: '2-digit', 
                         minute: '2-digit',
                         hour12: false
@@ -56,12 +57,12 @@
                     });
 
                     // Crea marker con popup e icona
-                    L.marker([point.latitude, point.longitude], {
+                    L.marker([point.lat, point.lon], {
                         icon: labelIcon
                     }).bindPopup(`
                         <b>${timestamp.toLocaleString()}</b><br>
-                        Lat: ${point.latitude.toFixed(4)}<br>
-                        Lon: ${point.longitude.toFixed(4)}
+                        Lat: ${point.lat.toFixed(4)}<br>
+                        Lon: ${point.lon.toFixed(4)}
                     `).addTo(map);
                 });
 
