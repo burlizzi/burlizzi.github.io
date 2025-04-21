@@ -1,82 +1,182 @@
+
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Mappa con Timeline</title>
+    <title>Timeline Mappa Interattiva</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
     <style>
-        #map { height: 600px; }
-        .leaflet-marker-icon.label {
-            background: transparent;
-            border: none;
+        #map { height: 500px; }
+        #timeline {
+            margin: 20px;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 15px;
         }
         .time-label {
-            font-size: 12px;
-            color: #fff;
-            background: #333;
-            padding: 2px 5px;
-            border-radius: 3px;
-            white-space: nowrap;
+            font-weight: bold;
+            min-width: 120px;
+        }
+        .highlight-marker {
+            background: #ff0000;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            text-align: center;
+            color: white;
+            line-height: 20px;
         }
     </style>
 </head>
 <body>
+    <div id="timeline">
+        <div class="slider-container">
+            <button onclick="playPause()">▶</button>
+            <input type="range" id="timeSlider" min="0" max="100" value="0" style="flex-grow: 1">
+            <span id="currentTime" class="time-label"></span>
+        </div>
+    </div>
     <div id="map"></div>
 
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <script>
-        const map = L.map('map').setView([45.4642, 9.1900], 13);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        let map;
+        let markers = [];
+        let timeData = [];
+        let isPlaying = false;
+        let animationInterval;
 
-        async function loadTrackData() {
+        // Inizializzazione mappa
+        function initMap() {
+            map = L.map('map').setView([45.4642, 9.1900], 13);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        }
+
+        // Carica dati e inizializza timeline
+        async function loadData() {
             try {
                 const response = await fetch('https://xtogeso2mwuprwi46kp7mf4t6m0drfoj.lambda-url.eu-west-1.on.aws/?id=6801d638-0000-2353-a061-14c14ef7b930&name=Portafoglio');
                 const data = await response.json();
                 
                 if(!Array.isArray(data)) throw new Error("Formato dati non valido");
                 
-                // Crea polilinea
-                const coordinates = data.map(p => [p.lat, p.lon]);
-                L.polyline(coordinates, {color: 'blue'}).addTo(map);
-
-                // Aggiungi marcatori con etichette temporali
-                data.forEach(point => {
-                    const timestamp = new Date(point.time);
-                    const timeString = timestamp.toLocaleTimeString([], { 
-                        day: '2-digit', 
-                        hour: '2-digit', 
-                        minute: '2-digit',
-                        hour12: false
-                    });
-
-                    // Crea icona personalizzata con etichetta
-                    const labelIcon = L.divIcon({
-                        className: 'label',
-                        html: `<div class="time-label">${timeString}</div>`,
-                        iconSize: [60, 20],
-                        iconAnchor: [30, 10]
-                    });
-
-                    // Crea marker con popup e icona
-                    L.marker([point.lat, point.lon], {
-                        icon: labelIcon
-                    }).bindPopup(`
-                        <b>${timestamp.toLocaleString()}</b><br>
-                        Lat: ${point.lat.toFixed(4)}<br>
-                        Lon: ${point.lon.toFixed(4)}
-                    `).addTo(map);
-                });
-
-                // Centra la mappa sulla traccia
-                const bounds = L.latLngBounds(coordinates);
-                map.fitBounds(bounds);
-
+                processData(data);
+                createMarkers();
+                initSlider();
+                updateDisplay(0);
             } catch (error) {
                 console.error('Errore:', error);
-                alert('Errore nel caricamento dei dati');
             }
         }
 
-        loadTrackData();
+        function processData(data) {
+            // Ordina i dati per timestamp e crea struttura timeData
+            timeData = data.sort((a, b) => 
+                new Date(a.timestamp) - new Date(b.timestamp))
+                .map(item => ({
+                    ...item,
+                    timestamp: new Date(item.timestamp).getTime()
+                }));
+        }
+
+        function createMarkers() {
+            // Crea marcatori con popup
+            markers = timeData.map(item => {
+                const marker = L.marker([item.lat, item.lon], {
+                    icon: L.divIcon({
+                        className: 'normal-marker',
+                        html: `<div>${new Date(item.timestamp).toLocaleTimeString()}</div>`,
+                        iconSize: [60, 20]
+                    })
+                }).bindPopup(`<b>${new Date(item.timestamp).toLocaleString()}</b>`);
+                
+                marker.addTo(map);
+                return marker;
+            });
+
+            // Crea polilinea
+            const coordinates = timeData.map(item => [item.lat, item.lon]);
+            L.polyline(coordinates, {color: 'blue'}).addTo(map);
+            map.fitBounds(coordinates);
+        }
+
+        function initSlider() {
+            const slider = document.getElementById('timeSlider');
+            const minTime = timeData[0].timestamp;
+            const maxTime = timeData[timeData.length - 1].timestamp;
+            
+            slider.min = 0;
+            slider.max = timeData.length - 1;
+            slider.value = 0;
+            
+            slider.oninput = function() {
+                updateDisplay(this.value);
+                if(isPlaying) pause();
+            }
+        }
+
+        function updateDisplay(index) {
+            const currentItem = timeData[index];
+            
+            // Aggiorna label tempo
+            document.getElementById('currentTime').textContent = 
+                new Date(currentItem.timestamp).toLocaleString();
+            
+            // Aggiorna marker
+            markers.forEach((marker, i) => {
+                if(i == index) {
+                    marker.setIcon(L.divIcon({
+                        className: 'highlight-marker',
+                        html: `<div>${new Date(currentItem.timestamp).toLocaleTimeString()}</div>`,
+                        iconSize: [60, 20],
+                        iconAnchor: [30, 10]
+                    }));
+                    map.panTo([currentItem.lat, currentItem.lon]);
+                    marker.openPopup();
+                } else {
+                    marker.setIcon(L.divIcon({
+                        className: 'normal-marker',
+                        html: `<div>${new Date(timeData[i].timestamp).toLocaleTimeString()}</div>`,
+                        iconSize: [60, 20]
+                    }));
+                }
+            });
+        }
+
+        function playPause() {
+            const button = document.querySelector('button');
+            if(!isPlaying) {
+                isPlaying = true;
+                button.textContent = '⏸';
+                animationInterval = setInterval(() => {
+                    const slider = document.getElementById('timeSlider');
+                    if(slider.value >= timeData.length - 1) {
+                        slider.value = 0;
+                        pause();
+                    } else {
+                        slider.value++;
+                    }
+                    updateDisplay(slider.value);
+                }, 1000);
+            } else {
+                pause();
+            }
+        }
+
+        function pause() {
+            isPlaying = false;
+            document.querySelector('button').textContent = '▶';
+            clearInterval(animationInterval);
+        }
+
+        // Inizializzazione
+        window.onload = () => {
+            initMap();
+            loadData();
+        };
     </script>
 </body>
 </html>
