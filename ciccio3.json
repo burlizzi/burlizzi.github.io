@@ -3,7 +3,7 @@
   "wake_word": "Okay Nabu",
   "author": "Kevin Ahrendt",
   "website": "https://www.kevinahrendt.com/",
-  "model": "tflite_learn_928505_31.tflite",
+  "model": "tflite_learn_928505_53.tflite",
   "trained_languages": ["en"],
   "version": 2,
   "micro": {
