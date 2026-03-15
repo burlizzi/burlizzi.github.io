@@ -3,7 +3,7 @@
   "wake_word": "Okay Nabu",
   "author": "Kevin Ahrendt",
   "website": "https://www.kevinahrendt.com/",
-  "model": "ciccio.tflite",
+  "model": "ei-kingphisher-project-1-classifier-tensorflow-lite-int8-quantized-model.28.lite",
   "trained_languages": ["en"],
   "version": 2,
   "micro": {
