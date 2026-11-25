@@ -1,0 +1,16 @@
+{
+  "name": "SondeHub Hunter",
+  "short_name": "SondeHunter",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "description": "Trova l'atterraggio previsto delle radiosonde più vicino e avvia il navigatore.",
+  "icons": [
+    {
+      "src": "https://sondehub.org/favicon.ico",
+      "sizes": "64x64",
+      "type": "image/x-icon"
+    }
+  ]
+}
