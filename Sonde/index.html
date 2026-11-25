@@ -125,18 +125,37 @@
       });
     }
 
-    function extractTrack(predData, serial) {
-      if (!predData) return null;
-      if (Array.isArray(predData[serial])) return predData[serial];
-      if (Array.isArray(predData)) {
-        const match = predData.find(item => item.serial === serial || item.vehicle === serial);
-        if (match && Array.isArray(match.data)) return match.data;
-        if (match && Array.isArray(match.positions)) return match.positions;
-      }
-      if (predData[serial] && Array.isArray(predData[serial].data)) {
-        return predData[serial].data;
+    function parseMaybeJsonArray(raw) {
+      if (Array.isArray(raw)) return raw;
+      if (typeof raw === 'string') {
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed : null;
+        } catch (_) {
+          return null;
+        }
       }
       return null;
+    }
+
+    function extractTrack(predData, serial) {
+      if (!predData) return null;
+
+      if (Array.isArray(predData)) {
+        const match = predData.find(item => item && (item.serial === serial || item.vehicle === serial));
+        if (match) {
+          return parseMaybeJsonArray(match.data) || parseMaybeJsonArray(match.positions) || null;
+        }
+        return null;
+      }
+
+      const entry = predData[serial];
+      if (!entry) return null;
+
+      return parseMaybeJsonArray(entry)
+          || parseMaybeJsonArray(entry.data)
+          || parseMaybeJsonArray(entry.positions)
+          || null;
     }
 
     async function scanSondes() {
@@ -182,15 +201,16 @@
           try {
             const predRes = await fetch(`https://api.v2.sondehub.org/predictions?serial=${encodeURIComponent(serial)}`);
             const predData = await predRes.json();
-            console.log("Predizione raw per", serial, predData);
             const track = extractTrack(predData, serial);
 
             if (Array.isArray(track) && track.length > 0) {
               const landing = track[track.length - 1];
-              if (typeof landing.latitude === 'number' && typeof landing.longitude === 'number') {
+              const lat = typeof landing.latitude === 'number' ? landing.latitude : landing.lat;
+              const lon = typeof landing.longitude === 'number' ? landing.longitude : landing.lon;
+              if (typeof lat === 'number' && typeof lon === 'number' && !Number.isNaN(lat) && !Number.isNaN(lon)) {
                 hasLanding = true;
-                targetLat = landing.latitude;
-                targetLon = landing.longitude;
+                targetLat = lat;
+                targetLon = lon;
                 if (landing.time) {
                   landTime = new Date(landing.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 }
@@ -222,7 +242,6 @@
           return;
         }
 
-        // Priorità alle sonde con previsione di atterraggio, poi ordinamento per distanza
         items.sort((a, b) => {
           if (a.hasLanding !== b.hasLanding) return a.hasLanding ? -1 : 1;
           return a.distKm - b.distKm;
