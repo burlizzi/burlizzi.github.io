@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SondeHub Hunter</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#0f172a" />
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --success: #22c55e;
+      --warn: #f59e0b;
+    }
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+    body {
+      margin: 0; padding: 16px;
+      background: var(--bg); color: var(--text);
+      max-width: 600px; margin-inline: auto;
+    }
+    header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 16px; border-bottom: 1px solid #334155; padding-bottom: 12px;
+    }
+    h1 { font-size: 1.3rem; margin: 0; color: var(--accent); }
+    .controls {
+      display: flex; gap: 8px; margin-bottom: 16px; align-items: center;
+    }
+    select, button.refresh {
+      background: var(--card); color: var(--text);
+      border: 1px solid #334155; padding: 10px 14px;
+      border-radius: 8px; font-size: 0.95rem;
+    }
+    button.refresh {
+      background: var(--accent); color: #0f172a; font-weight: 700;
+      border: none; cursor: pointer; flex: 1;
+    }
+    button.refresh:disabled { opacity: 0.5; }
+    .status {
+      font-size: 0.85rem; color: var(--muted);
+      margin-bottom: 16px; background: var(--card);
+      padding: 10px; border-radius: 8px;
+    }
+    .card {
+      background: var(--card); border-radius: 12px;
+      padding: 16px; margin-bottom: 14px;
+      border: 1px solid #334155;
+    }
+    .card.closest { border-color: var(--success); border-width: 2px; }
+    .badge {
+      display: inline-block; font-size: 0.75rem; font-weight: 700;
+      padding: 3px 8px; border-radius: 99px; margin-bottom: 8px;
+      background: var(--success); color: #052e16;
+    }
+    .card-header {
+      display: flex; justify-content: space-between; align-items: baseline;
+    }
+    .serial { font-size: 1.2rem; font-weight: 700; }
+    .dist { font-size: 1.3rem; font-weight: 800; color: var(--accent); }
+    .meta {
+      font-size: 0.88rem; color: var(--muted);
+      margin: 8px 0 14px 0; line-height: 1.5;
+    }
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .btn-nav {
+      display: block; text-align: center; text-decoration: none;
+      padding: 12px; border-radius: 8px; font-weight: 700; font-size: 0.95rem;
+    }
+    .btn-gmaps { background: var(--success); color: #052e16; }
+    .btn-geo { background: #334155; color: var(--text); }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>🎈 SondeHub Hunter</h1>
+    <span id="gps-badge" style="font-size: 0.8rem; color: var(--warn);">GPS in attesa...</span>
+  </header>
+
+  <div class="controls">
+    <select id="radius">
+      <option value="100000">Raggio: 100 km</option>
+      <option value="200000" selected>Raggio: 200 km</option>
+      <option value="350000">Raggio: 350 km</option>
+    </select>
+    <button id="btn-scan" class="refresh" onclick="scanSondes()">Aggiorna</button>
+  </div>
+
+  <div id="status" class="status">Premi "Aggiorna" o attendi il fix GPS...</div>
+  <div id="results"></div>
+
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
+
+    let userLat = null;
+    let userLon = null;
+
+    function haversineKm(lat1, lon1, lat2, lon2) {
+      const R = 6371;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) ** 2 +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    function getPosition() {
+      return new Promise((resolve, reject) => {
+        if (!navigator.geolocation) return reject("Geolocalizzazione non supportata.");
+        navigator.geolocation.getCurrentPosition(
+          pos => resolve(pos.coords),
+          err => reject("Errore GPS: " + err.message),
+          { enableHighAccuracy: true, timeout: 10000 }
+        );
+      });
+    }
+
+    async function scanSondes() {
+      const btn = document.getElementById('btn-scan');
+      const status = document.getElementById('status');
+      const resultsDiv = document.getElementById('results');
+      const radius = document.getElementById('radius').value;
+
+      btn.disabled = true;
+      resultsDiv.innerHTML = '';
+
+      try {
+        status.textContent = "Acquisizione posizione GPS...";
+        const coords = await getPosition();
+        userLat = coords.latitude;
+        userLon = coords.longitude;
+        document.getElementById('gps-badge').textContent = `GPS: ${userLat.toFixed(3)}, ${userLon.toFixed(3)}`;
+        document.getElementById('gps-badge').style.color = '#22c55e';
+
+        status.textContent = "Ricerca sonde attive su SondeHub...";
+        const sondesUrl = `https://api.v2.sondehub.org/sondes?lat=${userLat}&lon=${userLon}&distance=${radius}`;
+        const sondesRes = await fetch(sondesUrl);
+        const sondesData = await sondesRes.json();
+        const serials = Object.keys(sondesData);
+
+        if (serials.length === 0) {
+          status.textContent = "Nessuna sonda attiva trovata nel raggio selezionato.";
+          btn.disabled = false;
+          return;
+        }
+
+        status.textContent = `Trovate ${serials.length} sonde. Scaricamento previsioni di atterraggio...`;
+
+        const predictionsList = [];
+
+        await Promise.all(serials.map(async (serial) => {
+          try {
+            const predRes = await fetch(`https://api.v2.sondehub.org/predictions?serial=${encodeURIComponent(serial)}`);
+            const predData = await predRes.json();
+            const track = predData[serial];
+            if (Array.isArray(track) && track.length > 0) {
+              const landing = track[track.length - 1];
+              const current = sondesData[serial];
+              const dist = haversineKm(userLat, userLon, landing.latitude, landing.longitude);
+
+              predictionsList.push({
+                serial,
+                type: current.type || 'Sconosciuto',
+                currAlt: Math.round(current.alt || 0),
+                velV: current.vel_v ? current.vel_v.toFixed(1) : '?',
+                landLat: landing.latitude,
+                landLon: landing.longitude,
+                landTime: landing.time ? new Date(landing.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'N/D',
+                distKm: dist
+              });
+            }
+          } catch (e) {
+            console.warn("Errore previsione per", serial, e);
+          }
+        }));
+
+        if (predictionsList.length === 0) {
+          status.textContent = "Sonde rilevate, ma nessuna previsione di atterraggio ancora disponibile.";
+          btn.disabled = false;
+          return;
+        }
+
+        predictionsList.sort((a, b) => a.distKm - b.distKm);
+        status.textContent = `Aggiornato alle ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} — ${predictionsList.length} previsioni ordinate per distanza.`;
+
+        predictionsList.forEach((s, idx) => {
+          const isClosest = idx === 0;
+          const gmapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${s.landLat},${s.landLon}`;
+          const geoUrl = `geo:${s.landLat},${s.landLon}?q=${s.landLat},${s.landLon}(Sonda+${s.serial})`;
+
+          const card = document.createElement('div');
+          card.className = `card ${isClosest ? 'closest' : ''}`;
+          card.innerHTML = `
+            ${isClosest ? '<div class="badge">PIÙ VICINA</div>' : ''}
+            <div class="card-header">
+              <span class="serial">${s.serial} <small style="color:var(--muted);font-weight:400;">(${s.type})</small></span>
+              <span class="dist">${s.distKm.toFixed(1)} km</span>
+            </div>
+            <div class="meta">
+              Quota attuale: <b>${s.currAlt} m</b> (Vel. V: ${s.velV} m/s)<br>
+              Atterraggio previsto: <b>${s.landTime}</b><br>
+              Coordinate: <code>${s.landLat.toFixed(5)}, ${s.landLon.toFixed(5)}</code>
+            </div>
+            <div class="actions">
+              <a class="btn-nav btn-gmaps" href="${gmapsUrl}" target="_blank">Google Maps</a>
+              <a class="btn-nav btn-geo" href="${geoUrl}">Altra App (OsmAnd)</a>
+            </div>
+          `;
+          resultsDiv.appendChild(card);
+        });
+
+      } catch (err) {
+        status.textContent = typeof err === 'string' ? err : "Errore di rete durante l'interrogazione di SondeHub.";
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    window.addEventListener('load', scanSondes);
+  </script>
+</body>
+  </html>
+  
