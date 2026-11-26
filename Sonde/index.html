@@ -124,9 +124,15 @@
   </header>
 
   <div class="controls">
-    <select id="location-mode">
-      <option value="preset" selected>Centro query: 48.821, 11.485 (70 km)</option>
-      <option value="gps">Usa posizione GPS attuale</option>
+    <select id="radius">
+      <option value="70000">Raggio: 70 km</option>
+      <option value="150000" selected>Raggio: 150 km</option>
+      <option value="250000">Raggio: 250 km</option>
+    </select>
+    <select id="lookback-hours">
+      <option value="6">Ultime 6h</option>
+      <option value="12" selected>Ultime 12h</option>
+      <option value="24">Ultime 24h</option>
     </select>
     <button id="btn-scan" class="refresh" onclick="scanSondes()">Aggiorna</button>
   </div>
@@ -143,12 +149,6 @@
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js').catch(() => {});
     }
-
-    const PRESET_LAT = 48.821;
-    const PRESET_LON = 11.485;
-    const PRESET_DIST = 70000;
-    const FROM_ISO = "2026-11-25T23:00:00Z";
-    const TO_ISO = "2026-11-26T07:55:50Z";
 
     function haversineKm(lat1, lon1, lat2, lon2) {
       const R = 6371;
@@ -184,16 +184,6 @@
       return null;
     }
 
-    function extractTrack(entry, serial) {
-      if (!entry) return null;
-      if (Array.isArray(entry)) return entry;
-      const item = entry[serial] || entry;
-      return parseMaybeJsonArray(item.data)
-          || parseMaybeJsonArray(item.positions)
-          || parseMaybeJsonArray(item)
-          || null;
-    }
-
     function hasNonNullRecovery(entry) {
       if (!entry || typeof entry !== 'object') return false;
       return entry.recovery !== null && entry.recovery !== undefined && entry.recovery !== '';
@@ -205,16 +195,51 @@
       return String(recovery);
     }
 
-    function buildSummaryUrl(lat, lon) {
+    function buildSummaryUrl(lat, lon, distanceMeters, lookbackHours) {
+      const now = new Date();
+      const fromDate = new Date(now.getTime() - lookbackHours * 3600 * 1000);
       const params = new URLSearchParams({
         lat: String(lat),
         lon: String(lon),
-        distance: String(PRESET_DIST),
-        from: FROM_ISO,
-        to: TO_ISO,
+        distance: String(distanceMeters),
+        from: fromDate.toISOString(),
+        to: now.toISOString(),
         predictions_only: "true"
       });
-      return `https://api.v2.sondehub.org/sondes/summary?${params.toString()}`;
+      return {
+        url: `https://api.v2.sondehub.org/sondes/summary?${params.toString()}`,
+        fromIso: fromDate.toISOString(),
+        toIso: now.toISOString()
+      };
+    }
+
+    function extractLandingInfo(entry) {
+      // 1) Formato summary ufficiale: predicted_landing = { lat, lon, alt }
+      const pred = entry.predicted_landing;
+      if (pred && typeof pred === 'object') {
+        const lat = typeof pred.lat === 'number' ? pred.lat : pred.latitude;
+        const lon = typeof pred.lon === 'number' ? pred.lon : pred.longitude;
+        const alt = typeof pred.alt === 'number' ? Math.round(pred.alt) : null;
+        if (typeof lat === 'number' && typeof lon === 'number' && !Number.isNaN(lat) && !Number.isNaN(lon)) {
+          return { lat, lon, alt, hasPrediction: true };
+        }
+      }
+
+      // 2) Fallback su array summary o campo data (anche stringa JSON)
+      const track = parseMaybeJsonArray(entry.data)
+        || (Array.isArray(entry.summary) ? entry.summary : null);
+
+      if (Array.isArray(track) && track.length > 0) {
+        const last = track[track.length - 1];
+        const lat = typeof last.latitude === 'number' ? last.latitude : last.lat;
+        const lon = typeof last.longitude === 'number' ? last.longitude : last.lon;
+        const alt = typeof last.alt === 'number' ? Math.round(last.alt) : null;
+        if (typeof lat === 'number' && typeof lon === 'number' && !Number.isNaN(lat) && !Number.isNaN(lon)) {
+          return { lat, lon, alt, hasPrediction: false };
+        }
+      }
+
+      return null;
     }
 
     async function scanSondes() {
@@ -222,19 +247,135 @@
       const status = document.getElementById('status');
       const infoContent = document.getElementById('info-content');
       const resultsDiv = document.getElementById('results');
-      const mode = document.getElementById('location-mode').value;
+      const radiusMeters = Number(document.getElementById('radius').value);
+      const lookbackHours = Number(document.getElementById('lookback-hours').value);
       const gpsBadge = document.getElementById('gps-badge');
 
       btn.disabled = true;
       resultsDiv.innerHTML = '';
 
-      let refLat = PRESET_LAT;
-      let refLon = PRESET_LON;
-
       try {
-        if (mode === 'gps') {
-          status.textContent = "Acquisizione posizione GPS...";
-          const coords = await getPosition();
-          refLat = coords.latitude;
-          refLon = coords.longitude;
-          gpsBadge.textContent = `GPS: ${refLat.toFixed(3)}, ${refLon.toFixed(3)}`;
+        status.textContent = "Acquisizione posizione GPS attuale...";
+        const coords = await getPosition();
+        const userLat = coords.latitude;
+        const userLon = coords.longitude;
+
+        gpsBadge.textContent = `GPS: ${userLat.toFixed(4)}, ${userLon.toFixed(4)}`;
+        gpsBadge.style.color = '#22c55e';
+
+        const { url, fromIso, toIso } = buildSummaryUrl(userLat, userLon, radiusMeters, lookbackHours);
+        status.textContent = "Interrogazione SondeHub summary...";
+
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        const radiosondesObj = data && typeof data === 'object' && data.radiosondes && typeof data.radiosondes === 'object'
+          ? data.radiosondes
+          : (data && typeof data === 'object' ? data : {});
+
+        const items = [];
+
+        for (const [serialKey, entry] of Object.entries(radiosondesObj)) {
+          if (!entry || typeof entry !== 'object') continue;
+
+          const summaryArr = Array.isArray(entry.summary) ? entry.summary : [];
+          const latestPoint = summaryArr.length > 0 ? summaryArr[summaryArr.length - 1] : {};
+          const serial = latestPoint.serial || serialKey;
+          const type = latestPoint.type || entry.type || 'Sonda';
+          const manufacturer = latestPoint.manufacturer ? ` · ${latestPoint.manufacturer}` : '';
+          const currAlt = typeof latestPoint.alt === 'number' ? Math.round(latestPoint.alt) : null;
+          const velV = typeof latestPoint.vel_v === 'number' ? latestPoint.vel_v.toFixed(1) : null;
+          const recoveryActive = hasNonNullRecovery(entry);
+
+          const landing = extractLandingInfo(entry);
+          if (!landing) continue;
+
+          const distKm = haversineKm(userLat, userLon, landing.lat, landing.lon);
+
+          items.push({
+            serial,
+            type: `${type}${manufacturer}`,
+            currAlt,
+            velV,
+            landAlt: landing.alt,
+            targetLat: landing.lat,
+            targetLon: landing.lon,
+            hasPrediction: landing.hasPrediction,
+            recoveryActive,
+            recoveryText: formatRecovery(entry.recovery),
+            distKm
+          });
+        }
+
+        items.sort((a, b) => a.distKm - b.distKm);
+
+        const recoveryCount = items.filter(x => x.recoveryActive).length;
+        const metaLimits = data?._metadata?.limits
+          ? `predLimit=${data._metadata.limits.predictions}, totalLimit=${data._metadata.limits.total}`
+          : 'limits=N/D';
+        const nowLocal = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+        infoContent.innerHTML = `
+          <div><b>Sonde trovate:</b> ${items.length} &nbsp;|&nbsp; <b style="color:#fca5a5;">Con recovery != null:</b> ${recoveryCount}</div>
+          <div><b>Posizione attuale:</b> ${userLat.toFixed(5)}, ${userLon.toFixed(5)} &nbsp;|&nbsp; <b>Raggio:</b> ${(radiusMeters / 1000).toFixed(0)} km</div>
+          <div><b>Finestra (UTC):</b> ${fromIso} → ${toIso}</div>
+          <div><b>Metadata:</b> ${metaLimits} &nbsp;|&nbsp; <b>Aggiornato:</b> ${nowLocal}</div>
+          <div><code>${url}</code></div>
+        `;
+
+        if (items.length === 0) {
+          status.textContent = "Nessuna previsione di atterraggio trovata nell'intervallo e raggio selezionati.";
+          btn.disabled = false;
+          return;
+        }
+
+        status.textContent = `Aggiornato alle ${nowLocal} — ${items.length} sonde ordinate per distanza.`;
+
+        items.forEach((s, idx) => {
+          const isClosest = idx === 0;
+          const gmapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${s.targetLat},${s.targetLon}`;
+          const geoUrl = `geo:${s.targetLat},${s.targetLon}?q=${s.targetLat},${s.targetLon}(Sonda+${encodeURIComponent(s.serial)})`;
+
+          const cardClasses = ['card'];
+          if (s.recoveryActive) cardClasses.push('has-recovery');
+          else if (isClosest) cardClasses.push('closest');
+
+          const card = document.createElement('div');
+          card.className = cardClasses.join(' ');
+          card.innerHTML = `
+            ${s.recoveryActive ? '<div class="badge recovery">RECOVERY ATTIVO</div>' : ''}
+            ${isClosest ? '<div class="badge">PIÙ VICINA</div>' : ''}
+            ${!s.hasPrediction ? '<div class="badge warn">DA TRAIETTORIA</div>' : ''}
+            <div class="card-header">
+              <span class="serial">${s.serial} <small style="color:var(--muted);font-weight:400;">(${s.type})</small></span>
+              <span class="dist">${s.distKm.toFixed(1)} km</span>
+            </div>
+            <div class="meta">
+              ${s.landAlt !== null ? `Quota atterraggio prevista: <b>${s.landAlt} m</b><br>` : ''}
+              ${s.currAlt !== null ? `Ultima quota nota: <b>${s.currAlt} m</b>${s.velV !== null ? ` (Vel. V: ${s.velV} m/s)` : ''}<br>` : ''}
+              <span class="recovery-label">Recovery: <b>${s.recoveryText}</b></span><br>
+              Coordinate atterraggio: <code>${s.targetLat.toFixed(5)}, ${s.targetLon.toFixed(5)}</code>
+            </div>
+            <div class="actions">
+              <a class="btn-nav btn-gmaps" href="${gmapsUrl}" target="_blank" rel="noopener">Google Maps</a>
+              <a class="btn-nav btn-geo" href="${geoUrl}">Altra App (OsmAnd)</a>
+            </div>
+          `;
+          resultsDiv.appendChild(card);
+        });
+
+      } catch (err) {
+        status.textContent = typeof err === 'string'
+          ? err
+          : `Errore durante l'interrogazione SondeHub: ${err.message || 'rete'}`;
+        infoContent.innerHTML = `<div>Impossibile completare il riepilogo. Verifica GPS, rete o parametri query.</div>`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    window.addEventListener('load', scanSondes);
+  </script>
+</body>
+</html>
