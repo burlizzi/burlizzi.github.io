@@ -15,20 +15,22 @@
       --accent: #38bdf8;
       --success: #22c55e;
       --warn: #f59e0b;
+      --danger: #ef4444;
+      --danger-bg: rgba(239, 68, 68, 0.14);
     }
     * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
     body {
       margin: 0; padding: 16px;
       background: var(--bg); color: var(--text);
-      max-width: 600px; margin-inline: auto;
+      max-width: 640px; margin-inline: auto;
     }
     header {
       display: flex; justify-content: space-between; align-items: center;
-      margin-bottom: 16px; border-bottom: 1px solid #334155; padding-bottom: 12px;
+      margin-bottom: 14px; border-bottom: 1px solid #334155; padding-bottom: 12px;
     }
     h1 { font-size: 1.3rem; margin: 0; color: var(--accent); }
     .controls {
-      display: flex; gap: 8px; margin-bottom: 16px; align-items: center;
+      display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap;
     }
     select, button.refresh {
       background: var(--card); color: var(--text);
@@ -40,10 +42,32 @@
       border: none; cursor: pointer; flex: 1;
     }
     button.refresh:disabled { opacity: 0.5; }
+    .info-box {
+      background: var(--card);
+      border: 1px solid #38bdf855;
+      border-left: 4px solid var(--accent);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+      font-size: 0.85rem;
+      line-height: 1.5;
+      color: var(--text);
+    }
+    .info-box .info-title {
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 4px;
+      font-size: 0.9rem;
+    }
+    .info-box code {
+      font-size: 0.78rem;
+      color: var(--muted);
+      word-break: break-all;
+    }
     .status {
       font-size: 0.85rem; color: var(--muted);
-      margin-bottom: 16px; background: var(--card);
-      padding: 10px; border-radius: 8px;
+      margin-bottom: 14px; background: var(--card);
+      padding: 10px 12px; border-radius: 8px;
     }
     .card {
       background: var(--card); border-radius: 12px;
@@ -51,19 +75,31 @@
       border: 1px solid #334155;
     }
     .card.closest { border-color: var(--success); border-width: 2px; }
+    .card.has-recovery {
+      background: linear-gradient(180deg, var(--danger-bg) 0%, var(--card) 55%);
+      border-color: var(--danger);
+      border-width: 2px;
+    }
+    .card.has-recovery .serial,
+    .card.has-recovery .recovery-label {
+      color: #fca5a5;
+    }
     .badge {
       display: inline-block; font-size: 0.75rem; font-weight: 700;
-      padding: 3px 8px; border-radius: 99px; margin-bottom: 8px;
+      padding: 3px 8px; border-radius: 99px; margin-bottom: 8px; margin-right: 6px;
       background: var(--success); color: #052e16;
     }
     .badge.warn {
       background: var(--warn); color: #1c1917;
     }
+    .badge.recovery {
+      background: var(--danger); color: #ffffff;
+    }
     .card-header {
-      display: flex; justify-content: space-between; align-items: baseline;
+      display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
     }
     .serial { font-size: 1.2rem; font-weight: 700; }
-    .dist { font-size: 1.3rem; font-weight: 800; color: var(--accent); }
+    .dist { font-size: 1.3rem; font-weight: 800; color: var(--accent); white-space: nowrap; }
     .meta {
       font-size: 0.88rem; color: var(--muted);
       margin: 8px 0 14px 0; line-height: 1.5;
@@ -75,6 +111,9 @@
     }
     .btn-gmaps { background: var(--success); color: #052e16; }
     .btn-geo { background: #334155; color: var(--text); }
+    .card.has-recovery .btn-gmaps {
+      background: var(--danger); color: #ffffff;
+    }
   </style>
 </head>
 <body>
@@ -85,15 +124,19 @@
   </header>
 
   <div class="controls">
-    <select id="radius">
-      <option value="100000">Raggio: 100 km</option>
-      <option value="200000" selected>Raggio: 200 km</option>
-      <option value="350000">Raggio: 350 km</option>
+    <select id="location-mode">
+      <option value="preset" selected>Centro query: 48.821, 11.485 (70 km)</option>
+      <option value="gps">Usa posizione GPS attuale</option>
     </select>
     <button id="btn-scan" class="refresh" onclick="scanSondes()">Aggiorna</button>
   </div>
 
-  <div id="status" class="status">Premi "Aggiorna" o attendi il fix GPS...</div>
+  <div id="info-box" class="info-box">
+    <div class="info-title">ℹ️ Info Riepilogo</div>
+    <div id="info-content">In attesa del primo caricamento...</div>
+  </div>
+
+  <div id="status" class="status">Avvio scansione...</div>
   <div id="results"></div>
 
   <script>
@@ -101,8 +144,11 @@
       navigator.serviceWorker.register('sw.js').catch(() => {});
     }
 
-    let userLat = null;
-    let userLon = null;
+    const PRESET_LAT = 48.821;
+    const PRESET_LON = 11.485;
+    const PRESET_DIST = 70000;
+    const FROM_ISO = "2026-11-25T23:00:00Z";
+    const TO_ISO = "2026-11-26T07:55:50Z";
 
     function haversineKm(lat1, lon1, lat2, lon2) {
       const R = 6371;
@@ -138,155 +184,57 @@
       return null;
     }
 
-    function extractTrack(predData, serial) {
-      if (!predData) return null;
-
-      if (Array.isArray(predData)) {
-        const match = predData.find(item => item && (item.serial === serial || item.vehicle === serial));
-        if (match) {
-          return parseMaybeJsonArray(match.data) || parseMaybeJsonArray(match.positions) || null;
-        }
-        return null;
-      }
-
-      const entry = predData[serial];
+    function extractTrack(entry, serial) {
       if (!entry) return null;
-
-      return parseMaybeJsonArray(entry)
-          || parseMaybeJsonArray(entry.data)
-          || parseMaybeJsonArray(entry.positions)
+      if (Array.isArray(entry)) return entry;
+      const item = entry[serial] || entry;
+      return parseMaybeJsonArray(item.data)
+          || parseMaybeJsonArray(item.positions)
+          || parseMaybeJsonArray(item)
           || null;
+    }
+
+    function hasNonNullRecovery(entry) {
+      if (!entry || typeof entry !== 'object') return false;
+      return entry.recovery !== null && entry.recovery !== undefined && entry.recovery !== '';
+    }
+
+    function formatRecovery(recovery) {
+      if (recovery === null || recovery === undefined) return 'null';
+      if (typeof recovery === 'object') return JSON.stringify(recovery);
+      return String(recovery);
+    }
+
+    function buildSummaryUrl(lat, lon) {
+      const params = new URLSearchParams({
+        lat: String(lat),
+        lon: String(lon),
+        distance: String(PRESET_DIST),
+        from: FROM_ISO,
+        to: TO_ISO,
+        predictions_only: "true"
+      });
+      return `https://api.v2.sondehub.org/sondes/summary?${params.toString()}`;
     }
 
     async function scanSondes() {
       const btn = document.getElementById('btn-scan');
       const status = document.getElementById('status');
+      const infoContent = document.getElementById('info-content');
       const resultsDiv = document.getElementById('results');
-      const radius = document.getElementById('radius').value;
+      const mode = document.getElementById('location-mode').value;
+      const gpsBadge = document.getElementById('gps-badge');
 
       btn.disabled = true;
       resultsDiv.innerHTML = '';
 
+      let refLat = PRESET_LAT;
+      let refLon = PRESET_LON;
+
       try {
-        status.textContent = "Acquisizione posizione GPS...";
-        const coords = await getPosition();
-        userLat = coords.latitude;
-        userLon = coords.longitude;
-        document.getElementById('gps-badge').textContent = `GPS: ${userLat.toFixed(3)}, ${userLon.toFixed(3)}`;
-        document.getElementById('gps-badge').style.color = '#22c55e';
-
-        status.textContent = "Ricerca sonde attive su SondeHub...";
-        const sondesUrl = `https://api.v2.sondehub.org/sondes?lat=${userLat}&lon=${userLon}&distance=${radius}`;
-        const sondesRes = await fetch(sondesUrl);
-        const sondesData = await sondesRes.json();
-        const serials = Object.keys(sondesData);
-
-        if (serials.length === 0) {
-          status.textContent = "Nessuna sonda attiva trovata nel raggio selezionato.";
-          btn.disabled = false;
-          return;
-        }
-
-        status.textContent = `Trovate ${serials.length} sonde. Controllo previsioni di atterraggio...`;
-
-        const items = [];
-
-        await Promise.all(serials.map(async (serial) => {
-          const current = sondesData[serial];
-          let hasLanding = false;
-          let targetLat = current.lat;
-          let targetLon = current.lon;
-          let landTime = 'N/D';
-
-          try {
-            const predRes = await fetch(`https://api.v2.sondehub.org/predictions?serial=${encodeURIComponent(serial)}`);
-            const predData = await predRes.json();
-            const track = extractTrack(predData, serial);
-
-            if (Array.isArray(track) && track.length > 0) {
-              const landing = track[track.length - 1];
-              const lat = typeof landing.latitude === 'number' ? landing.latitude : landing.lat;
-              const lon = typeof landing.longitude === 'number' ? landing.longitude : landing.lon;
-              if (typeof lat === 'number' && typeof lon === 'number' && !Number.isNaN(lat) && !Number.isNaN(lon)) {
-                hasLanding = true;
-                targetLat = lat;
-                targetLon = lon;
-                if (landing.time) {
-                  landTime = new Date(landing.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                }
-              }
-            }
-          } catch (e) {
-            console.warn("Errore previsione per", serial, e);
-          }
-
-          if (typeof targetLat === 'number' && typeof targetLon === 'number') {
-            const dist = haversineKm(userLat, userLon, targetLat, targetLon);
-            items.push({
-              serial,
-              type: current.type || current.subtype || 'Sonda',
-              currAlt: Math.round(current.alt || 0),
-              velV: typeof current.vel_v === 'number' ? current.vel_v.toFixed(1) : '?',
-              targetLat,
-              targetLon,
-              landTime,
-              hasLanding,
-              distKm: dist
-            });
-          }
-        }));
-
-        if (items.length === 0) {
-          status.textContent = "Sonde rilevate, ma nessuna coordinata valida disponibile.";
-          btn.disabled = false;
-          return;
-        }
-
-        items.sort((a, b) => {
-          if (a.hasLanding !== b.hasLanding) return a.hasLanding ? -1 : 1;
-          return a.distKm - b.distKm;
-        });
-
-        const landingCount = items.filter(x => x.hasLanding).length;
-        status.textContent = `Aggiornato alle ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} — ${landingCount}/${items.length} con previsione di atterraggio.`;
-
-        items.forEach((s, idx) => {
-          const isClosest = idx === 0;
-          const gmapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${s.targetLat},${s.targetLon}`;
-          const geoUrl = `geo:${s.targetLat},${s.targetLon}?q=${s.targetLat},${s.targetLon}(Sonda+${s.serial})`;
-
-          const card = document.createElement('div');
-          card.className = `card ${isClosest ? 'closest' : ''}`;
-          card.innerHTML = `
-            ${isClosest ? '<div class="badge">PIÙ VICINA</div>' : ''}
-            ${!s.hasLanding ? '<div class="badge warn">POSIZIONE ATTUALE (NO PREVISIONE)</div>' : ''}
-            <div class="card-header">
-              <span class="serial">${s.serial} <small style="color:var(--muted);font-weight:400;">(${s.type})</small></span>
-              <span class="dist">${s.distKm.toFixed(1)} km</span>
-            </div>
-            <div class="meta">
-              Quota attuale: <b>${s.currAlt} m</b> (Vel. V: ${s.velV} m/s)<br>
-              ${s.hasLanding
-                ? `Atterraggio previsto: <b>${s.landTime}</b><br>`
-                : `Previsione atterraggio non disponibile: punto impostato su ultima posizione nota<br>`}
-              Coordinate target: <code>${s.targetLat.toFixed(5)}, ${s.targetLon.toFixed(5)}</code>
-            </div>
-            <div class="actions">
-              <a class="btn-nav btn-gmaps" href="${gmapsUrl}" target="_blank">Google Maps</a>
-              <a class="btn-nav btn-geo" href="${geoUrl}">Altra App (OsmAnd)</a>
-            </div>
-          `;
-          resultsDiv.appendChild(card);
-        });
-
-      } catch (err) {
-        status.textContent = typeof err === 'string' ? err : "Errore di rete durante l'interrogazione di SondeHub.";
-      } finally {
-        btn.disabled = false;
-      }
-    }
-
-    window.addEventListener('load', scanSondes);
-  </script>
-</body>
-</html>
+        if (mode === 'gps') {
+          status.textContent = "Acquisizione posizione GPS...";
+          const coords = await getPosition();
+          refLat = coords.latitude;
+          refLon = coords.longitude;
+          gpsBadge.textContent = `GPS: ${refLat.toFixed(3)}, ${refLon.toFixed(3)}`;
