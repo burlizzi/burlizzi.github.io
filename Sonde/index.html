@@ -139,10 +139,10 @@
 
   <div id="info-box" class="info-box">
     <div class="info-title">ℹ️ Info Riepilogo</div>
-    <div id="info-content">In attesa del primo caricamento...</div>
+    <div id="info-content">In attesa della posizione più recente...</div>
   </div>
 
-  <div id="status" class="status">Avvio scansione...</div>
+  <div id="status" class="status">Richiesta posizione GPS più recente...</div>
   <div id="results"></div>
 
   <script>
@@ -160,15 +160,72 @@
       return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
-    function getPosition() {
+    function requestCurrentPosition(options) {
       return new Promise((resolve, reject) => {
-        if (!navigator.geolocation) return reject("Geolocalizzazione non supportata.");
-        navigator.geolocation.getCurrentPosition(
-          pos => resolve(pos.coords),
-          err => reject("Errore GPS: " + err.message),
-          { enableHighAccuracy: true, timeout: 10000 }
-        );
+        navigator.geolocation.getCurrentPosition(resolve, reject, options);
       });
+    }
+
+    function requestWatchFix(timeoutMs = 8000) {
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const watchId = navigator.geolocation.watchPosition(
+          pos => {
+            if (settled) return;
+            settled = true;
+            navigator.geolocation.clearWatch(watchId);
+            resolve(pos);
+          },
+          err => {
+            if (settled) return;
+            settled = true;
+            navigator.geolocation.clearWatch(watchId);
+            reject(err);
+          },
+          { enableHighAccuracy: true, maximumAge: 0, timeout: timeoutMs }
+        );
+
+        setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          navigator.geolocation.clearWatch(watchId);
+          reject(new Error("Timeout attesa fix GPS recente"));
+        }, timeoutMs + 500);
+      });
+    }
+
+    /**
+     * Richiede la posizione più recente possibile:
+     * 1) Prova un fix fresco (maximumAge: 0) ad alta precisione.
+     * 2) Se non arriva subito, usa watchPosition per catturare il primo aggiornamento fresco.
+     * 3) Come ultimo ripiego, accetta una lettura recente (fino a 15s) se il sensore fatica.
+     */
+    async function getLatestPosition() {
+      if (!navigator.geolocation) {
+        throw new Error("Geolocalizzazione non supportata dal browser.");
+      }
+
+      try {
+        return await requestCurrentPosition({
+          enableHighAccuracy: true,
+          maximumAge: 0,
+          timeout: 8000
+        });
+      } catch (_) {
+        try {
+          return await requestWatchFix(7000);
+        } catch (err) {
+          try {
+            return await requestCurrentPosition({
+              enableHighAccuracy: false,
+              maximumAge: 15000,
+              timeout: 6000
+            });
+          } catch (__ ) {
+            throw new Error(err?.message || "Impossibile ottenere una posizione GPS recente.");
+          }
+        }
+      }
     }
 
     function parseMaybeJsonArray(raw) {
@@ -214,7 +271,6 @@
     }
 
     function extractLandingInfo(entry) {
-      // 1) Formato summary ufficiale: predicted_landing = { lat, lon, alt }
       const pred = entry.predicted_landing;
       if (pred && typeof pred === 'object') {
         const lat = typeof pred.lat === 'number' ? pred.lat : pred.latitude;
@@ -225,7 +281,6 @@
         }
       }
 
-      // 2) Fallback su array summary o campo data (anche stringa JSON)
       const track = parseMaybeJsonArray(entry.data)
         || (Array.isArray(entry.summary) ? entry.summary : null);
 
@@ -255,12 +310,17 @@
       resultsDiv.innerHTML = '';
 
       try {
-        status.textContent = "Acquisizione posizione GPS attuale...";
-        const coords = await getPosition();
+        status.textContent = "Richiesta posizione GPS più recente...";
+        const pos = await getLatestPosition();
+        const coords = pos.coords;
         const userLat = coords.latitude;
         const userLon = coords.longitude;
+        const accMeters = typeof coords.accuracy === 'number' ? Math.round(coords.accuracy) : null;
+        const fixAgeSec = typeof pos.timestamp === 'number'
+          ? Math.max(0, Math.round((Date.now() - pos.timestamp) / 1000))
+          : 0;
 
-        gpsBadge.textContent = `GPS: ${userLat.toFixed(4)}, ${userLon.toFixed(4)}`;
+        gpsBadge.textContent = `GPS: ${userLat.toFixed(4)}, ${userLon.toFixed(4)} (±${accMeters ?? '?'}m)`;
         gpsBadge.style.color = '#22c55e';
 
         const { url, fromIso, toIso } = buildSummaryUrl(userLat, userLon, radiusMeters, lookbackHours);
@@ -318,8 +378,8 @@
 
         infoContent.innerHTML = `
           <div><b>Sonde trovate:</b> ${items.length} &nbsp;|&nbsp; <b style="color:#fca5a5;">Con recovery != null:</b> ${recoveryCount}</div>
-          <div><b>Posizione attuale:</b> ${userLat.toFixed(5)}, ${userLon.toFixed(5)} &nbsp;|&nbsp; <b>Raggio:</b> ${(radiusMeters / 1000).toFixed(0)} km</div>
-          <div><b>Finestra (UTC):</b> ${fromIso} → ${toIso}</div>
+          <div><b>Posizione più recente:</b> ${userLat.toFixed(5)}, ${userLon.toFixed(5)} (età fix: ${fixAgeSec}s, prec.: ±${accMeters ?? '?'}m)</div>
+          <div><b>Raggio:</b> ${(radiusMeters / 1000).toFixed(0)} km &nbsp;|&nbsp; <b>Finestra (UTC):</b> ${fromIso} → ${toIso}</div>
           <div><b>Metadata:</b> ${metaLimits} &nbsp;|&nbsp; <b>Aggiornato:</b> ${nowLocal}</div>
           <div><code>${url}</code></div>
         `;
@@ -366,10 +426,8 @@
         });
 
       } catch (err) {
-        status.textContent = typeof err === 'string'
-          ? err
-          : `Errore durante l'interrogazione SondeHub: ${err.message || 'rete'}`;
-        infoContent.innerHTML = `<div>Impossibile completare il riepilogo. Verifica GPS, rete o parametri query.</div>`;
+        status.textContent = err?.message || String(err);
+        infoContent.innerHTML = `<div>Impossibile completare il riepilogo. Verifica i permessi di geolocalizzazione e la connessione di rete.</div>`;
       } finally {
         btn.disabled = false;
       }
