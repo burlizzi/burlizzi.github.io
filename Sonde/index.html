@@ -108,7 +108,9 @@
     .btn-nav {
       display: block; text-align: center; text-decoration: none;
       padding: 12px; border-radius: 8px; font-weight: 700; font-size: 0.95rem;
+      border: none; cursor: pointer;
     }
+    .btn-nav:disabled { opacity: 0.55; cursor: wait; }
     .btn-gmaps { background: var(--success); color: #052e16; }
     .btn-geo { background: #334155; color: var(--text); }
     .card.has-recovery .btn-gmaps {
@@ -149,6 +151,9 @@
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js').catch(() => {});
     }
+
+    let lastKnownCoords = null;
+    let currentItems = [];
 
     function haversineKm(lat1, lon1, lat2, lon2) {
       const R = 6371;
@@ -194,38 +199,59 @@
       });
     }
 
-    /**
-     * Richiede la posizione più recente possibile:
-     * 1) Prova un fix fresco (maximumAge: 0) ad alta precisione.
-     * 2) Se non arriva subito, usa watchPosition per catturare il primo aggiornamento fresco.
-     * 3) Come ultimo ripiego, accetta una lettura recente (fino a 15s) se il sensore fatica.
-     */
     async function getLatestPosition() {
       if (!navigator.geolocation) {
         throw new Error("Geolocalizzazione non supportata dal browser.");
       }
 
       try {
-        return await requestCurrentPosition({
+        const pos = await requestCurrentPosition({
           enableHighAccuracy: true,
           maximumAge: 0,
           timeout: 8000
         });
+        lastKnownCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+        return pos;
       } catch (_) {
         try {
-          return await requestWatchFix(7000);
+          const pos = await requestWatchFix(7000);
+          lastKnownCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+          return pos;
         } catch (err) {
           try {
-            return await requestCurrentPosition({
+            const pos = await requestCurrentPosition({
               enableHighAccuracy: false,
               maximumAge: 15000,
               timeout: 6000
             });
+            lastKnownCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+            return pos;
           } catch (__ ) {
             throw new Error(err?.message || "Impossibile ottenere una posizione GPS recente.");
           }
         }
       }
+    }
+
+    function buildGoogleMapsUrl(destLat, destLon, originLat = null, originLon = null) {
+      const params = new URLSearchParams({
+        api: "1",
+        destination: `${destLat},${destLon}`,
+        travelmode: "driving"
+      });
+      if (
+        typeof originLat === 'number' &&
+        typeof originLon === 'number' &&
+        !Number.isNaN(originLat) &&
+        !Number.isNaN(originLon)
+      ) {
+        params.set("origin", `${originLat},${originLon}`);
+      }
+      return `https://www.google.com/maps/dir/?${params.toString()}`;
+    }
+
+    function buildGeoUrl(destLat, destLon, serial) {
+      return `geo:${destLat},${destLon}?q=${destLat},${destLon}(Sonda+${encodeURIComponent(serial)})`;
     }
 
     function parseMaybeJsonArray(raw) {
@@ -295,6 +321,149 @@
       }
 
       return null;
+    }
+
+    async function refreshLandingForSonde(sonde, refLat, refLon) {
+      const radiusMeters = Number(document.getElementById('radius').value);
+      const lookbackHours = Number(document.getElementById('lookback-hours').value);
+      const { url } = buildSummaryUrl(refLat, refLon, radiusMeters, lookbackHours);
+
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      const radiosondesObj = data && typeof data === 'object' && data.radiosondes && typeof data.radiosondes === 'object'
+        ? data.radiosondes
+        : {};
+
+      const entry = radiosondesObj[sonde.serial]
+        || Object.values(radiosondesObj).find(obj => {
+          const arr = Array.isArray(obj?.summary) ? obj.summary : [];
+          return arr.some(p => p?.serial === sonde.serial);
+        });
+
+      if (!entry) return sonde;
+
+      const summaryArr = Array.isArray(entry.summary) ? entry.summary : [];
+      const latestPoint = summaryArr.length > 0 ? summaryArr[summaryArr.length - 1] : {};
+      const landing = extractLandingInfo(entry);
+
+      const updatedLat = landing?.lat ?? sonde.targetLat;
+      const updatedLon = landing?.lon ?? sonde.targetLon;
+      const updatedLandAlt = landing?.alt ?? sonde.landAlt;
+      const updatedHasPrediction = landing?.hasPrediction ?? sonde.hasPrediction;
+      const updatedCurrAlt = typeof latestPoint.alt === 'number' ? Math.round(latestPoint.alt) : sonde.currAlt;
+      const updatedVelV = typeof latestPoint.vel_v === 'number' ? latestPoint.vel_v.toFixed(1) : sonde.velV;
+      const recoveryActive = hasNonNullRecovery(entry);
+
+      return {
+        ...sonde,
+        currAlt: updatedCurrAlt,
+        velV: updatedVelV,
+        landAlt: updatedLandAlt,
+        targetLat: updatedLat,
+        targetLon: updatedLon,
+        hasPrediction: updatedHasPrediction,
+        recoveryActive,
+        recoveryText: formatRecovery(entry.recovery),
+        distKm: haversineKm(refLat, refLon, updatedLat, updatedLon)
+      };
+    }
+
+    async function handleNavigateClick(buttonEl, serial, targetApp) {
+      const status = document.getElementById('status');
+      const gpsBadge = document.getElementById('gps-badge');
+      const originalText = buttonEl.textContent;
+      const idx = currentItems.findIndex(x => x.serial === serial);
+      if (idx === -1) return;
+
+      let sonde = currentItems[idx];
+      buttonEl.disabled = true;
+      buttonEl.textContent = "Aggiorno arrivo...";
+
+      let originLat = lastKnownCoords?.lat ?? null;
+      let originLon = lastKnownCoords?.lon ?? null;
+
+      try {
+        const pos = await getLatestPosition();
+        originLat = pos.coords.latitude;
+        originLon = pos.coords.longitude;
+        const accMeters = typeof pos.coords.accuracy === 'number' ? Math.round(pos.coords.accuracy) : null;
+        gpsBadge.textContent = `GPS: ${originLat.toFixed(4)}, ${originLon.toFixed(4)} (±${accMeters ?? '?'}m)`;
+        gpsBadge.style.color = '#22c55e';
+      } catch (_) {
+        // Mantiene lastKnownCoords se disponibile
+      }
+
+      if (originLat !== null && originLon !== null) {
+        try {
+          sonde = await refreshLandingForSonde(sonde, originLat, originLon);
+          currentItems[idx] = sonde;
+          renderResults(currentItems, originLat, originLon);
+          status.textContent = `Atterraggio ${sonde.serial} aggiornato: ${sonde.targetLat.toFixed(5)}, ${sonde.targetLon.toFixed(5)} (${sonde.distKm.toFixed(1)} km).`;
+        } catch (_) {
+          status.textContent = `Uso ultima previsione nota per ${sonde.serial}.`;
+        }
+      }
+
+      const navUrl = targetApp === 'geo'
+        ? buildGeoUrl(sonde.targetLat, sonde.targetLon, sonde.serial)
+        : buildGoogleMapsUrl(sonde.targetLat, sonde.targetLon, originLat, originLon);
+
+      buttonEl.disabled = false;
+      buttonEl.textContent = originalText;
+
+      if (targetApp === 'geo') {
+        window.location.href = navUrl;
+      } else {
+        window.open(navUrl, "_blank", "noopener");
+      }
+    }
+
+    function renderResults(items, refLat, refLon) {
+      const resultsDiv = document.getElementById('results');
+      resultsDiv.innerHTML = '';
+
+      items.forEach((s, idx) => {
+        const isClosest = idx === 0;
+        const distNow = (typeof refLat === 'number' && typeof refLon === 'number')
+          ? haversineKm(refLat, refLon, s.targetLat, s.targetLon)
+          : s.distKm;
+
+        const cardClasses = ['card'];
+        if (s.recoveryActive) cardClasses.push('has-recovery');
+        else if (isClosest) cardClasses.push('closest');
+
+        const card = document.createElement('div');
+        card.className = cardClasses.join(' ');
+        card.innerHTML = `
+          ${s.recoveryActive ? '<div class="badge recovery">RECOVERY ATTIVO</div>' : ''}
+          ${isClosest ? '<div class="badge">PIÙ VICINA</div>' : ''}
+          ${!s.hasPrediction ? '<div class="badge warn">DA TRAIETTORIA</div>' : ''}
+          <div class="card-header">
+            <span class="serial">${s.serial} <small style="color:var(--muted);font-weight:400;">(${s.type})</small></span>
+            <span class="dist">${distNow.toFixed(1)} km</span>
+          </div>
+          <div class="meta">
+            ${s.landAlt !== null ? `Quota atterraggio prevista: <b>${s.landAlt} m</b><br>` : ''}
+            ${s.currAlt !== null ? `Ultima quota nota: <b>${s.currAlt} m</b>${s.velV !== null ? ` (Vel. V: ${s.velV} m/s)` : ''}<br>` : ''}
+            <span class="recovery-label">Recovery: <b>${s.recoveryText}</b></span><br>
+            Coordinate atterraggio: <code>${s.targetLat.toFixed(5)}, ${s.targetLon.toFixed(5)}</code>
+          </div>
+          <div class="actions">
+            <button type="button" class="btn-nav btn-gmaps" data-app="gmaps">Google Maps</button>
+            <button type="button" class="btn-nav btn-geo" data-app="geo">Altra App (OsmAnd)</button>
+          </div>
+        `;
+
+        card.querySelectorAll('.btn-nav').forEach(btn => {
+          btn.addEventListener('click', () => {
+            handleNavigateClick(btn, s.serial, btn.dataset.app);
+          });
+        });
+
+        resultsDiv.appendChild(card);
+      });
     }
 
     async function scanSondes() {
@@ -369,6 +538,7 @@
         }
 
         items.sort((a, b) => a.distKm - b.distKm);
+        currentItems = items;
 
         const recoveryCount = items.filter(x => x.recoveryActive).length;
         const metaLimits = data?._metadata?.limits
@@ -391,39 +561,7 @@
         }
 
         status.textContent = `Aggiornato alle ${nowLocal} — ${items.length} sonde ordinate per distanza.`;
-
-        items.forEach((s, idx) => {
-          const isClosest = idx === 0;
-          const gmapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${s.targetLat},${s.targetLon}`;
-          const geoUrl = `geo:${s.targetLat},${s.targetLon}?q=${s.targetLat},${s.targetLon}(Sonda+${encodeURIComponent(s.serial)})`;
-
-          const cardClasses = ['card'];
-          if (s.recoveryActive) cardClasses.push('has-recovery');
-          else if (isClosest) cardClasses.push('closest');
-
-          const card = document.createElement('div');
-          card.className = cardClasses.join(' ');
-          card.innerHTML = `
-            ${s.recoveryActive ? '<div class="badge recovery">RECOVERY ATTIVO</div>' : ''}
-            ${isClosest ? '<div class="badge">PIÙ VICINA</div>' : ''}
-            ${!s.hasPrediction ? '<div class="badge warn">DA TRAIETTORIA</div>' : ''}
-            <div class="card-header">
-              <span class="serial">${s.serial} <small style="color:var(--muted);font-weight:400;">(${s.type})</small></span>
-              <span class="dist">${s.distKm.toFixed(1)} km</span>
-            </div>
-            <div class="meta">
-              ${s.landAlt !== null ? `Quota atterraggio prevista: <b>${s.landAlt} m</b><br>` : ''}
-              ${s.currAlt !== null ? `Ultima quota nota: <b>${s.currAlt} m</b>${s.velV !== null ? ` (Vel. V: ${s.velV} m/s)` : ''}<br>` : ''}
-              <span class="recovery-label">Recovery: <b>${s.recoveryText}</b></span><br>
-              Coordinate atterraggio: <code>${s.targetLat.toFixed(5)}, ${s.targetLon.toFixed(5)}</code>
-            </div>
-            <div class="actions">
-              <a class="btn-nav btn-gmaps" href="${gmapsUrl}" target="_blank" rel="noopener">Google Maps</a>
-              <a class="btn-nav btn-geo" href="${geoUrl}">Altra App (OsmAnd)</a>
-            </div>
-          `;
-          resultsDiv.appendChild(card);
-        });
+        renderResults(currentItems, userLat, userLon);
 
       } catch (err) {
         status.textContent = err?.message || String(err);
