@@ -155,6 +155,10 @@
     let lastKnownCoords = null;
     let currentItems = [];
 
+    function isAndroid() {
+      return /Android/i.test(navigator.userAgent || '');
+    }
+
     function haversineKm(lat1, lon1, lat2, lon2) {
       const R = 6371;
       const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -234,6 +238,9 @@
     }
 
     function buildGoogleMapsUrl(destLat, destLon, originLat = null, originLon = null) {
+      if (isAndroid()) {
+        return `google.navigation:q=${destLat},${destLon}&mode=d`;
+      }
       const params = new URLSearchParams({
         api: "1",
         destination: `${destLat},${destLon}`,
@@ -252,6 +259,19 @@
 
     function buildGeoUrl(destLat, destLon, serial) {
       return `geo:${destLat},${destLon}?q=${destLat},${destLon}(Sonda+${encodeURIComponent(serial)})`;
+    }
+
+    function formatDatetime(rawDatetime) {
+      if (!rawDatetime) return 'N/D';
+      const date = new Date(rawDatetime);
+      if (Number.isNaN(date.getTime())) return String(rawDatetime);
+      return date.toLocaleString([], {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
     }
 
     function parseMaybeJsonArray(raw) {
@@ -354,12 +374,14 @@
       const updatedHasPrediction = landing?.hasPrediction ?? sonde.hasPrediction;
       const updatedCurrAlt = typeof latestPoint.alt === 'number' ? Math.round(latestPoint.alt) : sonde.currAlt;
       const updatedVelV = typeof latestPoint.vel_v === 'number' ? latestPoint.vel_v.toFixed(1) : sonde.velV;
+      const updatedDatetime = latestPoint.datetime || sonde.latestDatetime || null;
       const recoveryActive = hasNonNullRecovery(entry);
 
       return {
         ...sonde,
         currAlt: updatedCurrAlt,
         velV: updatedVelV,
+        latestDatetime: updatedDatetime,
         landAlt: updatedLandAlt,
         targetLat: updatedLat,
         targetLon: updatedLon,
@@ -413,7 +435,7 @@
       buttonEl.disabled = false;
       buttonEl.textContent = originalText;
 
-      if (targetApp === 'geo') {
+      if (targetApp === 'geo' || isAndroid()) {
         window.location.href = navUrl;
       } else {
         window.open(navUrl, "_blank", "noopener");
@@ -445,6 +467,7 @@
             <span class="dist">${distNow.toFixed(1)} km</span>
           </div>
           <div class="meta">
+            Ultimo pacchetto: <b>${formatDatetime(s.latestDatetime)}</b><br>
             ${s.landAlt !== null ? `Quota atterraggio prevista: <b>${s.landAlt} m</b><br>` : ''}
             ${s.currAlt !== null ? `Ultima quota nota: <b>${s.currAlt} m</b>${s.velV !== null ? ` (Vel. V: ${s.velV} m/s)` : ''}<br>` : ''}
             <span class="recovery-label">Recovery: <b>${s.recoveryText}</b></span><br>
@@ -515,6 +538,7 @@
           const manufacturer = latestPoint.manufacturer ? ` · ${latestPoint.manufacturer}` : '';
           const currAlt = typeof latestPoint.alt === 'number' ? Math.round(latestPoint.alt) : null;
           const velV = typeof latestPoint.vel_v === 'number' ? latestPoint.vel_v.toFixed(1) : null;
+          const latestDatetime = latestPoint.datetime || null;
           const recoveryActive = hasNonNullRecovery(entry);
 
           const landing = extractLandingInfo(entry);
@@ -527,6 +551,7 @@
             type: `${type}${manufacturer}`,
             currAlt,
             velV,
+            latestDatetime,
             landAlt: landing.alt,
             targetLat: landing.lat,
             targetLon: landing.lon,
